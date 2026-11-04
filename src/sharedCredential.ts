@@ -1,8 +1,7 @@
-import { verifyAuthenticationResponse } from "@simplewebauthn/server";
+import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 
 export const binary = (value: unknown): Buffer => {
-	if (!(value instanceof Uint8Array) || value.length === 0)
-		throw new Error("Expected binary WebAuthn data");
+	if (!(value instanceof Uint8Array) || value.length === 0) throw new Error('Expected binary WebAuthn data');
 	return Buffer.from(value);
 };
 export type SharedCredential = {
@@ -18,24 +17,19 @@ export async function verifySharedCredentialAssertion(
 	credential: any,
 	expected: { challenge: string; origin: string | string[]; rpId: string },
 ) {
-	const id = record.credentialId.toString("base64url");
-	if (
-		credential?.id !== id ||
-		binary(credential.rawId).toString("base64url") !== id
-	)
-		throw new Error("WebAuthn assertion used a different credential");
+	const id = record.credentialId.toString('base64url');
+	if (credential?.id !== id || binary(credential.rawId).toString('base64url') !== id)
+		throw new Error('WebAuthn assertion used a different credential');
 	const authenticatorData = binary(credential.response.authenticatorData);
 	const result = await verifyAuthenticationResponse({
 		response: {
 			id,
 			rawId: id,
-			type: "public-key",
+			type: 'public-key',
 			response: {
-				authenticatorData: authenticatorData.toString("base64url"),
-				clientDataJSON: binary(credential.response.clientDataJSON).toString(
-					"base64url",
-				),
-				signature: binary(credential.response.signature).toString("base64url"),
+				authenticatorData: authenticatorData.toString('base64url'),
+				clientDataJSON: binary(credential.response.clientDataJSON).toString('base64url'),
+				signature: binary(credential.response.signature).toString('base64url'),
 			},
 			clientExtensionResults: {},
 		},
@@ -49,8 +43,7 @@ export async function verifySharedCredentialAssertion(
 			counter: Number(record.signatureCount),
 		},
 	});
-	if (!result.verified)
-		throw new Error("WebAuthn assertion failed verification");
+	if (!result.verified) throw new Error('WebAuthn assertion failed verification');
 	return {
 		authenticatorData,
 		newCounter: result.authenticationInfo.newCounter,

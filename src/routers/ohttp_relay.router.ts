@@ -1,10 +1,16 @@
 import express, { Router } from 'express';
 import fetch from 'node-fetch';
 import { config } from '../../config';
+import { logger } from '../logger';
+
+const log = logger.child({ module: 'OhttpRelay' });
 
 const ohttpRelayRouter: Router = Router();
 
-const relayTargetUrl = new URL('gateway', config.ohttpGatewayUrl.endsWith('/') ? config.ohttpGatewayUrl : `${config.ohttpGatewayUrl}/`).toString();
+const relayTargetUrl = new URL(
+	'gateway',
+	config.ohttpGatewayUrl.endsWith('/') ? config.ohttpGatewayUrl : `${config.ohttpGatewayUrl}/`,
+).toString();
 
 ohttpRelayRouter.post('/', express.raw({ type: '*/*', limit: '17mb' }), async (req, res) => {
 	try {
@@ -38,13 +44,10 @@ ohttpRelayRouter.post('/', express.raw({ type: '*/*', limit: '17mb' }), async (r
 
 		const responseBody = Buffer.from(await gatewayResponse.arrayBuffer());
 		return res.send(responseBody);
-	}
-	catch (error) {
-		console.error('OHTTP relay proxy error:', error);
+	} catch (error) {
+		log.error({ err: error }, 'OHTTP relay proxy error');
 		return res.status(502).send();
 	}
 });
 
-export {
-	ohttpRelayRouter
-};
+export { ohttpRelayRouter };

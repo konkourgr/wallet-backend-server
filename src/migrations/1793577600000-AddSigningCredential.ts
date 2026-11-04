@@ -1,11 +1,9 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /** Fresh single-key schema. Use a database separate from previewSign. */
 export class AddSigningCredential1793577600000 implements MigrationInterface {
 	public async up(queryRunner: QueryRunner): Promise<void> {
-		await queryRunner.query(
-			"ALTER TABLE `webauthn_credential` ADD `pendingSigningAttestation` blob NULL",
-		);
+		await queryRunner.query('ALTER TABLE `webauthn_credential` ADD `pendingSigningAttestation` blob NULL');
 		await queryRunner.query(`CREATE TABLE \`signing_credential\` (
 			\`id\` varchar(36) NOT NULL,
 			\`userUuid\` varchar(36) NOT NULL,
@@ -22,9 +20,7 @@ export class AddSigningCredential1793577600000 implements MigrationInterface {
 		) ENGINE=InnoDB`);
 	}
 	public async down(queryRunner: QueryRunner): Promise<void> {
-		await queryRunner.query("DROP TABLE `signing_credential`");
-		await queryRunner.query(
-			"ALTER TABLE `webauthn_credential` DROP COLUMN `pendingSigningAttestation`",
-		);
+		await queryRunner.query('DROP TABLE `signing_credential`');
+		await queryRunner.query('ALTER TABLE `webauthn_credential` DROP COLUMN `pendingSigningAttestation`');
 	}
 }
