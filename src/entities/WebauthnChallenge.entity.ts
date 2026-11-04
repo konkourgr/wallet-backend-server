@@ -55,7 +55,7 @@ enum ChallengeErr {
 const challengeRepository: Repository<WebauthnChallengeEntity> = AppDataSource.getRepository(WebauthnChallengeEntity);
 
 
-async function createChallenge(type: "create" | "get", userId?: UserId, prfSalt?: Buffer): Promise<Result<CreatedChallenge, ChallengeErr>> {
+async function createChallenge(type: "create" | "get" | "preview-sign-register" | `preview-sign:${string}`, userId?: UserId, prfSalt?: Buffer): Promise<Result<CreatedChallenge, ChallengeErr>> {
 	try {
 		const returnData = {
 			userId,
@@ -80,9 +80,10 @@ async function createChallenge(type: "create" | "get", userId?: UserId, prfSalt?
 }
 
 async function popChallenge(id: string): Promise<Result<WebauthnChallengeEntity, ChallengeErr>> {
+	if (typeof id !== "string" || !id) return Err(ChallengeErr.NOT_EXISTS);
 	return await challengeRepository.manager.transaction(async (manager) => {
 		try {
-			const res = await manager.findOne(WebauthnChallengeEntity, { where: { id } });
+			const res = await manager.findOne(WebauthnChallengeEntity, { where: { id }, lock: { mode: "pessimistic_write" } });
 
 			if (!res) {
 				return Err(ChallengeErr.NOT_EXISTS);

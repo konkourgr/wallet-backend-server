@@ -15,12 +15,16 @@
     "start-docker": "node -r source-map-support/register /dist/src/app.js",
     "typeorm": "typeorm-ts-node-commonjs -d src/AppDataSource.ts",
     "typeorm-raw": "typeorm-ts-node-commonjs",
-    "migration:run:prod": "typeorm migration:run -d dist/src/AppDataSource.js"
+    "migration:run:prod": "typeorm migration:run -d dist/src/AppDataSource.js",
+    "test:preview-sign": "node --require ts-node/register tests/previewSign.test.ts",
+    "test:single-key:integration": "TS_NODE_FILES=true node --require ts-node/register tests/singleKey.integration.ts"
   },
   "keywords": [],
   "author": "",
   "description": "",
   "dependencies": {
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
     "@simplewebauthn/server": "^13.3.2",
     "@types/ws": "^8.18.1",
     "axios": "^0.31.0",

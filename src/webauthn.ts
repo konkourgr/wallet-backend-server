@@ -45,6 +45,7 @@ export function makeCreateOptions({
 			attestation: config.webauthn.attestation,
 			extensions: {
 				credProps: true,
+				...(config.previewSignEnabled ? { previewSign: { generateKey: { algorithms: [-65539] } } } : {}),
 				prf: {
 					eval: prfSalt
 						? { first: prfSalt }

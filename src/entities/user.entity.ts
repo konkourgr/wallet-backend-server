@@ -168,6 +168,11 @@ class WebauthnCredentialEntity {
 	@Column({ nullable: false })
 	prfCapable: boolean;
 
+	// Registration-time previewSign output, retained to retry the proof using
+	// this same PRF credential. It contains no plaintext signing private seed.
+	@Column({ type: 'blob', nullable: true })
+	pendingSigningAttestation: Buffer | null;
+
 	getCredentialDescriptor() {
 		return {
 			type: "public-key",

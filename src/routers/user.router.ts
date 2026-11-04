@@ -1,4 +1,8 @@
+import AppDataSource from '../AppDataSource';
+import { validateCombinedRegistration } from '../combinedRegistration';
+import { verifySharedCredentialAssertion } from '../sharedCredential';
 import express, { Request, Response, Router } from 'express';
+import { previewSignRouter } from './previewSign.router';
 import * as uuid from 'uuid';
 import crypto from 'node:crypto';
 import * as SimpleWebauthn from '@simplewebauthn/server';
@@ -6,7 +10,7 @@ import base64url from 'base64url';
 import { EntityManager } from "typeorm"
 
 import { config } from '../../config';
-import { CreateUser, createUser, deleteUser, deleteWebauthnCredential, getUserByCredentials, getUser, getUserByWebauthnCredential, GetUserErr, hasWebauthnCredentialId, newWebauthnCredentialEntity, privateDataEtag, updateUser, UpdateUserErr, updateWebauthnCredential, updateWebauthnCredentialById, UserEntity, UserId } from '../entities/user.entity';
+import { CreateUser, createUser, deleteUser, deleteWebauthnCredential, getUserByCredentials, getUser, getUserByWebauthnCredential, GetUserErr, hasWebauthnCredentialId, newWebauthnCredentialEntity, privateDataEtag, updateUser, UpdateUserErr, updateWebauthnCredential, updateWebauthnCredentialById, UserEntity, UserId, WebauthnCredentialEntity } from '../entities/user.entity';
 import { checkedUpdate, EtagUpdate, jsonParseTaggedBinary } from '../util/util';
 import { AuthMiddleware, createAppToken } from '../middlewares/auth.middleware';
 import { ChallengeErr, createChallenge, popChallenge } from '../entities/WebauthnChallenge.entity';
@@ -29,6 +33,7 @@ const noAuthUserController: Router = express.Router();
 
 const userController: Router = express.Router();
 userController.use(AuthMiddleware);
+userController.use('/preview-sign', previewSignRouter);
 noAuthUserController.use('/session', userController);
 
 async function initSession(user: UserEntity): Promise<{
@@ -112,8 +117,6 @@ if (!config.registerDisabled) {
 	});
 
 	noAuthUserController.post('/register-webauthn-finish', async (req: Request, res: Response) => {
-		console.log("webauthn register-finish", req.body);
-
 		const challengeRes = await popChallenge(req.body.challengeId);
 		if (challengeRes.err) {
 			if ([ChallengeErr.EXPIRED, ChallengeErr.NOT_EXISTS].includes(challengeRes.val)) {
@@ -124,32 +127,50 @@ if (!config.registerDisabled) {
 			return;
 		}
 		const challenge = challengeRes.unwrap();
+		if (challenge.type !== 'create' || !challenge.userId)
+			return res.status(400).send({ error: 'Invalid registration challenge' });
 		console.log("webauthn register-finish challenge", challenge);
 
 		const credential = req.body.credential;
-		const verification = await SimpleWebauthn.verifyRegistrationResponse({
-			response: {
-				type: credential.type,
-				id: credential.id,
-				rawId: credential.id, // SimpleWebauthn requires this base64url encoded
+		let pendingSigningAttestation: Buffer | null = null;
+		try {
+			if (config.previewSignEnabled)
+				pendingSigningAttestation = validateCombinedRegistration(
+					credential,
+					req.body.signingAttestation,
+					config.webauthn.rp.id,
+				);
+		} catch (error) {
+			return res.status(400).send({ error: error instanceof Error ? error.message : 'Invalid combined registration' });
+		}
+		let verification;
+		try {
+			verification = await SimpleWebauthn.verifyRegistrationResponse({
 				response: {
-					attestationObject: base64url.encode(
-						// Remove the attestation statement, so that for example expired
-						// attestation certs don't cause the registration to fail.
-						// We only want the attestation for informational purposes, such as
-						// being able to monitor vulnerability reports and warn affected
-						// users; we don't actually care whether the attestation is valid.
-						webauthn.stripAttestationStatement(credential.response.attestationObject)
-					),
-					clientDataJSON: base64url.encode(credential.response.clientDataJSON),
+					type: credential.type,
+					id: credential.id,
+					rawId: credential.id, // SimpleWebauthn requires this base64url encoded
+					response: {
+						attestationObject: base64url.encode(
+							// Remove the attestation statement, so that for example expired
+							// attestation certs don't cause the registration to fail.
+							// We only want the attestation for informational purposes, such as
+							// being able to monitor vulnerability reports and warn affected
+							// users; we don't actually care whether the attestation is valid.
+							webauthn.stripAttestationStatement(credential.response.attestationObject)
+						),
+						clientDataJSON: base64url.encode(credential.response.clientDataJSON),
+					},
+					clientExtensionResults: credential.clientExtensionResults,
 				},
-				clientExtensionResults: credential.clientExtensionResults,
-			},
-			expectedChallenge: base64url.encode(challenge.challenge),
-			expectedOrigin: config.webauthn.origin,
-			expectedRPID: config.webauthn.rp.id,
-			requireUserVerification: true,
-		});
+				expectedChallenge: base64url.encode(challenge.challenge),
+				expectedOrigin: config.webauthn.origin,
+				expectedRPID: config.webauthn.rp.id,
+				requireUserVerification: true,
+			});
+		} catch {
+			return res.status(400).send({ error: 'Registration response could not be verified' });
+		}
 
 		if (verification.verified) {
 			if (!challenge.userId) {
@@ -179,6 +200,7 @@ if (!config.registerDisabled) {
 						attestationObject: credential.response.attestationObject,
 						create_clientDataJSON: credential.response.clientDataJSON,
 						prfCapable: credential.clientExtensionResults?.prf?.enabled || false,
+						pendingSigningAttestation,
 					}),
 				],
 			};
@@ -233,8 +255,6 @@ noAuthUserController.post('/login-webauthn-begin', async (req: Request, res: Res
 });
 
 noAuthUserController.post('/login-webauthn-finish', async (req: Request, res: Response) => {
-	console.log("webauthn login-finish", req.body);
-
 	const credential = req.body.credential;
 	const userId = UserId.fromUserHandle(credential.response.userHandle);
 	const credentialId = credential.rawId;
@@ -270,54 +290,31 @@ noAuthUserController.post('/login-webauthn-finish', async (req: Request, res: Re
 
 	console.log("webauthn login-finish challenge", challenge);
 
-	let verification;
 	try {
-		verification = await SimpleWebauthn.verifyAuthenticationResponse({
-			response: {
-				type: credential.type,
-				id: credential.id,
-				rawId: credential.id, // SimpleWebauthn requires this base64url encoded
-				response: {
-					authenticatorData: base64url.encode(credential.response.authenticatorData),
-					clientDataJSON: base64url.encode(credential.response.clientDataJSON),
-					signature: base64url.encode(credential.response.signature),
-				},
-				clientExtensionResults: credential.clientExtensionResults,
-			},
-			expectedChallenge: base64url.encode(challenge.challenge),
-			expectedOrigin: config.webauthn.origin,
-			expectedRPID: config.webauthn.rp.id,
-			requireUserVerification: true,
-			credential: {
-				id: base64url.encode(credentialRecord.credentialId),
-				publicKey: new Uint8Array(credentialRecord.publicKeyCose),
-				counter: credentialRecord.signatureCount,
-				transports: (credentialRecord.transports || []) as AuthenticatorTransport[],
-			},
+		if (challenge.type !== 'get') throw new Error('Challenge is not for login');
+		await AppDataSource.transaction(async (manager) => {
+			const current = await manager.findOne(WebauthnCredentialEntity, {
+				where: { id: credentialRecord.id, user: { uuid: userId } },
+				lock: { mode: 'pessimistic_write' },
+			});
+			if (!current) throw new Error('Credential no longer exists');
+			const verified = await verifySharedCredentialAssertion(current, credential, {
+				challenge: challenge.challenge.toString('base64url'),
+				origin: config.webauthn.origin,
+				rpId: config.webauthn.rp.id,
+			});
+			current.signatureCount = verified.newCounter;
+			current.lastUseTime = new Date();
+			await manager.save(current);
 		});
-	} catch (e) {
-		console.log(e);
-		return res.status(400).send({});
+		res
+			.status(200)
+			.header({ 'X-Private-Data-ETag': privateDataEtag(user.privateData) })
+			.send(await initSession(user));
+	} catch {
+		res.status(400).send({ error: 'WebAuthn authentication could not be verified' });
 	}
 
-	if (verification.verified) {
-		const updateCredentialRes = await updateWebauthnCredential(credentialRecord, (entity) => {
-			entity.signatureCount = verification.authenticationInfo.newCounter;
-			entity.lastUseTime = new Date();
-			return entity;
-		});
-
-		if (updateCredentialRes.ok) {
-			res.status(200)
-				.header({ 'X-Private-Data-ETag': privateDataEtag(user.privateData) })
-				.send(await initSession(user));
-		} else {
-			res.status(500).send({});
-		}
-
-	} else {
-		res.status(400).send({});
-	}
 })
 
 
@@ -394,8 +391,6 @@ userController.post('/webauthn/register-begin', async (req: Request, res: Respon
 });
 
 userController.post('/webauthn/register-finish', async (req: Request, res: Response) => {
-	console.log("webauthn register-finish", req.body);
-
 	const userRes = await getUser(req.user.id);
 	if (userRes.err) {
 		res.status(403).send({});
@@ -413,10 +408,23 @@ userController.post('/webauthn/register-finish', async (req: Request, res: Respo
 		return;
 	}
 	const challenge = challengeRes.unwrap();
+	if (challenge.type !== 'create' || challenge.userId?.id !== req.user.id.id)
+		return res.status(400).send({ error: 'Invalid registration challenge' });
 
 	console.log("webauthn register-finish challenge", challenge);
 
 	const credential = req.body.credential;
+	let pendingSigningAttestation: Buffer | null = null;
+	try {
+		if (config.previewSignEnabled)
+			pendingSigningAttestation = validateCombinedRegistration(
+				credential,
+				req.body.signingAttestation,
+				config.webauthn.rp.id,
+			);
+	} catch (error) {
+		return res.status(400).send({ error: error instanceof Error ? error.message : 'Invalid combined registration' });
+	}
 	let verification;
 	try {
 		verification = await SimpleWebauthn.verifyRegistrationResponse({
@@ -460,6 +468,7 @@ userController.post('/webauthn/register-finish', async (req: Request, res: Respo
 					attestationObject: Buffer.from(credential.response.attestationObject),
 					create_clientDataJSON: Buffer.from(credential.response.clientDataJSON),
 					prfCapable: credential.clientExtensionResults?.prf?.enabled || false,
+					pendingSigningAttestation,
 				}, manager)
 			);
 

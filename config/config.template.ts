@@ -7,6 +7,7 @@ function getPositiveInteger(value: string | undefined, fallback: number): number
 }
 
 export const config = {
+	previewSignEnabled: process.env.PREVIEW_SIGN_ENABLED !== "false",
 	url: process.env.APP_URL || "${SERVICE_URL}",
 	port: process.env.PORT || "${SERVICE_PORT}",
 	appSecret: process.env.APP_SECRET || "${SERVICE_SECRET}",
